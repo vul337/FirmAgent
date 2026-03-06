@@ -1,0 +1,3 @@
+[submodule "FuzzingRecord/Fuzzing-SA"]
+	path = FuzzingRecord/Fuzzing-SA
+	url = git@github.com:AxiaoJJ/Fuzzing-SA.git

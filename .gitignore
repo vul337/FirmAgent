@@ -1,0 +1,4 @@
+.vscode
+ida*.log
+old*
+__pycache__

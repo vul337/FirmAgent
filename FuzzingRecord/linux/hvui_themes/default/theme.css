@@ -1,0 +1,15 @@
+
+@importtheme "_base";
+
+vault_files_dirtree_widget_t
+{
+    background-color: darkgrey;
+}
+
+QStatusBar#main_status_bar QLabel
+{
+    min-width: 70px;
+    margin:    0;
+    padding:   0 10px 0 0;
+}
+

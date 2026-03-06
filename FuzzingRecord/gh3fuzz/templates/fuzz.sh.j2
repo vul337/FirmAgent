@@ -1,0 +1,96 @@
+#!/fuzz_bins/utils/sh
+
+ARCH={{arch}}
+CMD={{cmd}}
+DRYRUN_TIMEOUT={{timeout}}
+export QEMU_SET_ENV="PATH=$PATH,LD_PRELOAD=$LD_PRELOAD"
+unset LD_PRELOAD
+
+cleanup () {
+	# sometimes the process creates a fork which stays alive
+	sleep $DRYRUN_TIMEOUT
+	ps | /fuzz_bins/utils/grep 'qemu-static' | /fuzz_bins/utils/grep -v 'grep' > /tmp/pids
+	out=$(cat /tmp/pids)
+	if [ -n "$out" ]; then
+		while read -r line; do
+	        	pid=$(echo $line | awk '{print $1}')
+	        	echo "Process still exists: $pid" >> /tmp/log
+	        	kill -9 $pid
+		done < /tmp/pids
+	fi
+}
+
+/fuzz_bins/utils/mkdir -p /scratch
+/fuzz_bins/utils/cp -a /fuzz/* /scratch
+cd /scratch
+/fuzz_bins/utils/cp /qemu-$ARCH-static /qemu-static
+
+# setup the execution environment by running the background scripts
+echo "[Fuzz] Launch background scripts..."
+{{bg_block}}
+
+# run the server once for some initialization
+echo "[Fuzz] Dry run the server..."
+output=$(/fuzz_bins/utils/timeout -s SIGTERM $DRYRUN_TIMEOUT /fuzz_bins/ghup_bins/unshare_pid /qemu-static -hackbind -hackproc -execve "/qemu-static -hackbind -hackproc" -- $CMD 2>&1 )
+result=$(ls / | /fuzz_bins/utils/grep 'GH_SUCCESSFUL_BIND')
+echo $result
+if [ -z "$result" ]
+then
+	echo "[GH_ERROR] Fail to launch the server normally!!!"
+	echo $output
+	echo "[Fuzz] Trying without unshare"
+	output=$(/fuzz_bins/utils/timeout -s SIGKILL $DRYRUN_TIMEOUT /qemu-static -hackbind -hackproc -execve "/qemu-static -hackbind -hackproc" -- $CMD 2>&1  && cleanup)
+	result=$(ls / | /fuzz_bins/utils/grep 'GH_SUCCESSFUL_BIND')
+	echo $result
+	if [ -z "$result" ]
+	then
+		echo "[GH_ERROR] Fail to launch the server normally!!!"
+		echo $output
+		echo "[GH_ERROR] Giving up"
+		exit
+	fi
+fi
+
+# get dry run output and extract the return address
+echo "[Fuzz] Dry run the server again to obtain the address for forkserver..."
+output=$(GH_DRYRUN=1 /fuzz_bins/utils/timeout -s SIGTERM $DRYRUN_TIMEOUT /fuzz_bins/ghup_bins/unshare_pid /usr/bin/afl-qemu-trace -hookhack -hackbind -hackproc -execve "/qemu-static -hackbind -hackproc" -- $CMD 2>&1)
+addr_str=$(echo "$output" | /fuzz_bins/utils/timeout -s SIGKILL $DRYRUN_TIMEOUT /fuzz_bins/utils/grep --line-buffered 'return addr')
+echo $addr_str
+if [ -z "$addr_str" ]
+then
+	echo "[GH_ERROR] something wrong with afl+GH!!!"
+	echo $output
+	echo "[Fuzz] Trying without unshare"
+	output=$(GH_DRYRUN=1 /fuzz_bins/utils/timeout -s SIGKILL $DRYRUN_TIMEOUT /usr/bin/afl-qemu-trace -hookhack -hackbind -hackproc -execve "/qemu-static -hackbind -hackproc" -- $CMD 2>&1 && cleanup)
+	addr_str=$(echo "$output" | /fuzz_bins/utils/timeout -s SIGKILL $DRYRUN_TIMEOUT /fuzz_bins/utils/grep --line-buffered 'return addr')
+	echo $addr_str
+	if [ -z "$addr_str" ]
+	then
+		echo "[GH_ERROR] something wrong with afl+GH!!!"
+		echo $output
+		echo "[GH_ERROR] Giving up"
+		exit
+	fi
+fi
+addr=$(echo $addr_str | /fuzz_bins/utils/cut -d' ' -f3)
+if [ -z "$addr" ]
+then
+	echo "[GH_ERROR] failed to extract the fork address from QEMU's output!!!"
+	exit
+fi
+
+# backup fork addr so that minify.sh can reuse it
+echo $addr > /scratch/addr
+
+# launch the fuzzer
+echo "[Fuzz] Start Fuzzing..."
+export AFL_ENTRYPOINT=$addr
+export LD_BIND_LAZY=1
+export AFL_NO_AFFINITY=1
+if [[ $ARCH == "arm" || $ARCH == "x86_64" ]];then
+	/fuzz_bins/utils/timeout 86400 /fuzz_bins/bin/afl-fuzz -t 1000 -Q -x /scratch/dictionary -i /scratch/seeds -o /scratch/output -z 1 -- $CMD
+else
+	/fuzz_bins/utils/timeout 86400 /fuzz_bins/bin/afl-fuzz -t 1000 -Q -x /scratch/dictionary -i /scratch/seeds -o /scratch/output -- $CMD
+fi
+/minify.sh
+awk '!seen[$0]++' /scratch/output.csv > /scratch/temp.csv && mv /scratch/temp.csv /scratch/output.csv

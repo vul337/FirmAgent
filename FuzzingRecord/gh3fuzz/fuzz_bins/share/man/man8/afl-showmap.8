@@ -1,0 +1,57 @@
+.TH afl-showmap 8 2024-03-05 afl++
+.SH NAME
+.B afl-showmap
+
+.SH SYNOPSIS
+afl-showmap [ options ] -- /path/to/target_app [ ... ]
+
+.SH OPTIONS
+.nf
+
+Required parameters:
+  -o file    - file to write the trace data to
+
+Execution control settings:
+  -t msec    - timeout for each run (none)
+  -m megs    - memory limit for child process (0 MB)
+  -O         - use binary-only instrumentation (FRIDA mode)
+  -Q         - use binary-only instrumentation (QEMU mode)
+  -U         - use Unicorn-based instrumentation (Unicorn mode)
+  -W         - use qemu-based instrumentation with Wine (Wine mode)
+               (Not necessary, here for consistency with other afl-* tools)
+
+Other settings:
+  -i dir     - process all files below this directory, must be combined with -o.
+               With -C, -o is a file, without -C it must be a directory
+               and each bitmap will be written there individually.
+  -C         - collect coverage, writes all edges to -o and gives a summary
+               Must be combined with -i.
+  -q         - sink program's output and don't show messages
+  -e         - show edge coverage only, ignore hit counts
+  -r         - show real tuple values instead of AFL filter values
+  -s         - do not classify the map
+  -c         - allow core dumps
+
+This tool displays raw tuple data captured by AFL instrumentation.
+For additional help, consult /usr/local/share/doc/afl/README.md.
+
+Environment variables used:
+LD_BIND_LAZY: do not set LD_BIND_NOW env var for target
+AFL_CMIN_CRASHES_ONLY: (cmin_mode) only write tuples for crashing inputs
+AFL_CMIN_ALLOW_ANY: (cmin_mode) write tuples for crashing inputs also
+AFL_CRASH_EXITCODE: optional child exit code to be interpreted as crash
+AFL_DEBUG: enable extra developer output
+AFL_FORKSRV_INIT_TMOUT: time spent waiting for forkserver during startup (in milliseconds)
+AFL_KILL_SIGNAL: Signal ID delivered to child processes on timeout, etc. (default: SIGKILL)
+AFL_MAP_SIZE: the shared memory size for that target. must be >= the size the target was compiled for
+AFL_PRELOAD: LD_PRELOAD / DYLD_INSERT_LIBRARIES settings for target
+AFL_PRINT_FILENAMES: If set, the filename currently processed will be printed to stdout
+AFL_QUIET: do not print extra informational output
+AFL_NO_FORKSRV: run target via execve instead of using the forkserver
+
+.SH AUTHOR
+afl++ was written by Michal "lcamtuf" Zalewski and is maintained by Marc "van Hauser" Heuse <mh@mh-sec.de>, Heiko "hexcoder-" Eissfeldt <heiko.eissfeldt@hexco.de>, Andrea Fioraldi <andreafioraldi@gmail.com> and Dominik Maier <domenukk@gmail.com>
+The homepage of afl++ is: https://github.com/AFLplusplus/AFLplusplus
+
+.SH LICENSE
+Apache License Version 2.0, January 2004

@@ -1,0 +1,4 @@
+cd /
+
+/sbin/httpd  
+

@@ -1,0 +1,66 @@
+#!/fuzz_bins/utils/sh
+
+ARCH={{arch}}
+CMD={{cmd}}
+DRYRUN_TIMEOUT={{timeout}}
+export QEMU_SET_ENV="PATH=$PATH,LD_PRELOAD=$LD_PRELOAD"
+unset LD_PRELOAD
+
+/fuzz_bins/utils/mkdir -p /scratch
+/fuzz_bins/utils/cp -a /fuzz/* /scratch
+cd /scratch
+/fuzz_bins/utils/cp /qemu-$ARCH-static /qemu-static
+
+# setup the execution environment by running the background scripts
+echo "[Fuzz] Launch background scripts..."
+{{bg_block}}
+
+# run the server once for some initialization
+echo "[Fuzz] Dry run the server..."
+output=$(/fuzz_bins/utils/timeout -s SIGTERM $DRYRUN_TIMEOUT /fuzz_bins/ghup_bins/unshare_pid /qemu-static -hackbind -hackproc -execve "/qemu-static -hackbind -hackproc" -- $CMD 2>&1 )
+result=$(echo "$output" | /fuzz_bins/utils/grep 'Successful Bind')
+echo $result
+if [ -z "$result" ]
+then
+	echo "[GH_ERROR] Fail to launch the server normally!!!"
+	echo $output
+	exit
+fi
+
+# sometimes the process creates a fork which stays alive
+sleep 1
+out=$(ps | /fuzz_bins/utils/grep 'qemu-static' | /fuzz_bins/utils/grep -v 'grep')
+if [ -n "$out" ]; then
+        pid=$(echo $out | awk '{print $1}')
+        echo "Process still exists: $pid"
+        kill -9 $pid
+fi
+
+# get dry run output and extract the return address
+echo "[Fuzz] Dry run the server again to obtain the address for forkserver..."
+output=$(GH_DRYRUN=1 /fuzz_bins/utils/timeout -s SIGTERM $DRYRUN_TIMEOUT /fuzz_bins/ghup_bins/unshare_pid /usr/bin/afl-qemu-trace -hookhack -hackbind -hackproc -execve "/qemu-static -hackbind -hackproc" -- $CMD 2>&1)
+addr_str=$(echo "$output" | /fuzz_bins/utils/timeout -s SIGKILL $DRYRUN_TIMEOUT /fuzz_bins/utils/grep --line-buffered 'return addr')
+echo $addr_str
+if [ -z "$addr_str" ]
+then
+	echo "[GH_ERROR] something wrong with afl+GH!!!"
+	echo $output
+	exit
+fi
+addr=$(echo $addr_str | /fuzz_bins/utils/cut -d' ' -f3)
+if [ -z "$addr" ]
+then
+	echo "[GH_ERROR] failed to extract the fork address from QEMU's output!!!"
+	exit
+fi
+
+# backup fork addr so that minify.sh can reuse it
+echo $addr > /scratch/addr
+
+# launch the fuzzer
+echo "[Fuzz] Start Fuzzing..."
+export AFL_ENTRYPOINT=$addr
+export LD_BIND_LAZY=1
+export AFL_NO_AFFINITY=1
+export AFL_AUTH_CMD="sleep 3; /fuzz_bins/ghup_bins/Initializer.static -t 127.0.0.1 -p 80 -b {{brand}} -m SINGLE_LOGIN"
+exec /fuzz_bins/bin/afl-fuzz -t 1000 -Q -x /scratch/dictionary -i /scratch/seeds -o /scratch/output -- $CMD

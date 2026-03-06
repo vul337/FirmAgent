@@ -1,0 +1,30 @@
+.TH afl-plot 8 2024-03-05 afl++
+.SH NAME
+.B afl-plot
+
+.SH SYNOPSIS
+afl-plot [ -g | --graphical ] afl_state_dir graph_output_dir
+
+.SH OPTIONS
+.nf
+
+This program generates gnuplot images from afl-fuzz output data.
+
+Usage:
+
+    afl_state_dir       should point to an existing state directory for any
+                        active or stopped instance of afl-fuzz
+    graph_output_dir    should point to an empty directory where this
+                        tool can write the resulting plots to
+    -g, --graphical     (optional) display the plots in a graphical window
+                        (you should have built afl-plot-ui to use this option)
+
+The program will put index.html and three PNG images in the output directory;
+you should be able to view it with any web browser of your choice.
+
+.SH AUTHOR
+afl++ was written by Michal "lcamtuf" Zalewski and is maintained by Marc "van Hauser" Heuse <mh@mh-sec.de>, Heiko "hexcoder-" Eissfeldt <heiko.eissfeldt@hexco.de>, Andrea Fioraldi <andreafioraldi@gmail.com> and Dominik Maier <domenukk@gmail.com>
+The homepage of afl++ is: https://github.com/AFLplusplus/AFLplusplus
+
+.SH LICENSE
+Apache License Version 2.0, January 2004

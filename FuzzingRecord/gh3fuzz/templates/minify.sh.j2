@@ -1,0 +1,24 @@
+#!/fuzz_bins/utils/sh
+
+CMD={{cmd}}
+export QEMU_SET_ENV="PATH=$PATH,LD_PRELOAD=$LD_PRELOAD"
+unset LD_PRELOAD
+# cp -a /shared_in/* /fuzz
+read addr < /scratch/addr
+
+export PATH=/fuzz_bins/utils:/fuzz_bins/bin:$PATH
+export AFL_ENTRYPOINT=$addr
+export LD_BIND_LAZY=1
+export AFL_PATH=/fuzz_bins/bin/
+
+# do tmin/cmin on all crash inputs
+if [ -d /scratch/output/default/crashes ]; then
+    cd /scratch/output/default/crashes
+    mkdir -p /scratch/output/tmin
+    for crash in ./id*; do
+        afl-tmin -Q -i $crash -o /scratch/output/tmin/$crash -- $CMD >/dev/null 2>/dev/null
+    done
+    /fuzz_bins/utils/sh /fuzz_bins/bin/afl-cmin -Q -i /scratch/output/tmin/ -o /scratch/output/cmin -C -- $CMD >/dev/null 2>/dev/null
+fi
+
+# cp -a /fuzz/output/cmin/* /shared_out

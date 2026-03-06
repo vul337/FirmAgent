@@ -1,0 +1,52 @@
+.TH afl-tmin 8 2024-03-05 afl++
+.SH NAME
+.B afl-tmin
+
+.SH SYNOPSIS
+afl-tmin [ options ] -- /path/to/target_app [ ... ]
+
+.SH OPTIONS
+.nf
+
+Required parameters:
+  -i file       - input test case to be shrunk by the tool
+  -o file       - final output location for the minimized data
+
+Execution control settings:
+  -f file       - input file read by the tested program (stdin)
+  -t msec       - timeout for each run (1000 ms)
+  -m megs       - memory limit for child process (0 MB)
+  -O            - use binary-only instrumentation (FRIDA mode)
+  -Q            - use binary-only instrumentation (QEMU mode)
+  -U            - use unicorn-based instrumentation (Unicorn mode)
+  -W            - use qemu-based instrumentation with Wine (Wine mode)
+                  (Not necessary, here for consistency with other afl-* tools)
+
+Minimization settings:
+  -e            - solve for edge coverage only, ignore hit counts
+  -x            - treat non-zero exit codes as crashes
+
+  -H            - minimize a hang (hang mode)
+For additional tips, please consult /usr/local/share/doc/afl/README.md.
+
+Environment variables used:
+AFL_CRASH_EXITCODE: optional child exit code to be interpreted as crash
+AFL_FORKSRV_INIT_TMOUT: time spent waiting for forkserver during startup (in milliseconds)
+AFL_KILL_SIGNAL: Signal ID delivered to child processes on timeout, etc. (default: SIGKILL)
+AFL_MAP_SIZE: the shared memory size for that target. must be >= the size
+              the target was compiled for
+AFL_PRELOAD:  LD_PRELOAD / DYLD_INSERT_LIBRARIES settings for target
+AFL_TMIN_EXACT: require execution paths to match for crashing inputs
+AFL_NO_FORKSRV: run target via execve instead of using the forkserver
+ASAN_OPTIONS: custom settings for ASAN
+              (must contain abort_on_error=1 and symbolize=0)
+MSAN_OPTIONS: custom settings for MSAN
+              (must contain exitcode=86 and symbolize=0)
+TMPDIR: directory to use for temporary input files
+
+.SH AUTHOR
+afl++ was written by Michal "lcamtuf" Zalewski and is maintained by Marc "van Hauser" Heuse <mh@mh-sec.de>, Heiko "hexcoder-" Eissfeldt <heiko.eissfeldt@hexco.de>, Andrea Fioraldi <andreafioraldi@gmail.com> and Dominik Maier <domenukk@gmail.com>
+The homepage of afl++ is: https://github.com/AFLplusplus/AFLplusplus
+
+.SH LICENSE
+Apache License Version 2.0, January 2004

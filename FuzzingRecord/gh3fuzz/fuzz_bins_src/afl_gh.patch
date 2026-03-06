@@ -1,0 +1,864 @@
+diff --git a/accel/tcg/cpu-exec.c b/accel/tcg/cpu-exec.c
+index bedf41b5..c31ef6c2 100644
+--- a/accel/tcg/cpu-exec.c
++++ b/accel/tcg/cpu-exec.c
+@@ -1100,6 +1100,9 @@ static void init_delay_params(SyncClocks *sc, const CPUState *cpu)
+  * TCG is not considered a security-sensitive part of QEMU so this does not
+  * affect the impact of CFI in environment with high security requirements
+  */
++extern target_ulong main_bin_start, main_bin_end;
++extern bool gh_dryrun_done;
++extern FILE *bk_stdout;
+ static inline TranslationBlock * QEMU_DISABLE_CFI
+ cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
+ {
+@@ -1108,6 +1111,13 @@ cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
+     TranslationBlock *last_tb;
+     const void *tb_ptr = itb->tc.ptr;
+ 
++    if(unlikely(gh_dryrun_done)) {
++        if(main_bin_start <= itb->pc && itb->pc <= main_bin_end) {
++            fprintf(bk_stdout, "return addr: 0x" TARGET_FMT_lx "\n", itb->pc);
++            exit(0);
++        }
++    }
++
+     qemu_log_mask_and_addr(CPU_LOG_EXEC, itb->pc,
+                            "Trace %d: %p ["
+                            TARGET_FMT_lx "/" TARGET_FMT_lx "/%#x] %s\n",
+diff --git a/linux-user/main.c b/linux-user/main.c
+index cdc4780c..4a69a4fc 100644
+--- a/linux-user/main.c
++++ b/linux-user/main.c
+@@ -63,6 +63,12 @@ static const char *seed_optarg;
+ unsigned long mmap_min_addr;
+ uintptr_t guest_base;
+ bool have_guest_base;
++target_ulong main_bin_start;
++target_ulong main_bin_end;
++int bk_stdin_fd = -1;
++int bk_stdout_fd = -1;
++FILE *bk_stdin;
++FILE *bk_stdout;
+ 
+ /*
+  * Used to implement backwards-compatibility for the `-strace`, and
+@@ -359,6 +365,31 @@ static void handle_arg_stack_size(const char *arg)
+     }
+ }
+ 
++static void handle_arg_execve(const char *arg)
++{
++    qemu_set_execve_path(arg);
++}
++
++static void handle_arg_hackproc(const char *arg)
++{
++    qemu_set_hackproc(arg);
++}
++
++static void handle_arg_hackbind(const char *arg)
++{
++    qemu_set_hackbind(arg);
++}
++
++static void handle_arg_hacksysinfo(const char *arg)
++{
++    qemu_set_hacksysinfo(arg);
++}
++
++static void handle_arg_hookhack(const char *arg)
++{
++    qemu_set_hookhack(arg);
++}
++
+ static void handle_arg_ld_prefix(const char *arg)
+ {
+     interp_prefix = strdup(arg);
+@@ -495,6 +526,16 @@ static const struct qemu_argument arg_table[] = {
+      "port",       "wait gdb connection to 'port'"},
+     {"L",          "QEMU_LD_PREFIX",   true,  handle_arg_ld_prefix,
+      "path",       "set the elf interpreter prefix to 'path'"},
++    {"hackbind",   "QEMU_HACKBIND",    false,   handle_arg_hackbind,
++     "",           "use hack to get around ipv6 addrs and conflicting binds"},
++    {"hackproc",   "QEMU_HACKPROC",    false,   handle_arg_hackproc,
++     "",           "use hack to get around needing to mount a writable /proc"},
++    {"hacksysinfo","QEMU_SYSINFO",    false,   handle_arg_hacksysinfo,
++     "",           "use hack to get around needing to mount a writable /proc"},
++    {"execve",     "QEMU_EXECVE",      true,   handle_arg_execve,
++     "path",       "use interpreter at 'path' when a process calls execve()"},
++    {"hookhack",   "QEMU_HOOKHACK",    false,   handle_arg_hookhack,
++     "",           "use hack to force the target binary to read from stdin"},
+     {"s",          "QEMU_STACK_SIZE",  true,  handle_arg_stack_size,
+      "size",       "set the stack size to 'size' bytes"},
+     {"cpu",        "QEMU_CPU",         true,  handle_arg_cpu,
+@@ -943,6 +984,27 @@ int main(int argc, char **argv, char **envp)
+ 
+     g_free(target_environ);
+ 
++    main_bin_start = info->start_code;
++    main_bin_end = info->end_code;
++
++    bk_stdin_fd = dup2(0, 1337);
++    bk_stdout_fd = dup2(1, 1338);
++    if(bk_stdin_fd < 0 || bk_stdout_fd < 0) {
++        puts("Error when backing up stdin and stdout");
++        _exit(EXIT_FAILURE);
++    }
++
++    bk_stdin = fdopen(bk_stdin_fd, "r");
++    bk_stdout = fdopen(bk_stdout_fd, "w");
++    setbuf(bk_stdin, NULL);
++    setbuf(bk_stdout, NULL);
++    if(bk_stdin == NULL || bk_stdout == NULL) {
++        puts("Error creating backup stdin and stdout file structs");
++        _exit(EXIT_FAILURE);
++    }
++    fprintf(stderr, "[HOOK] %d %d\n", bk_stdin_fd, bk_stdout_fd);
++    fprintf(bk_stdout, "[HOOK2] %d %d\n", bk_stdin_fd, bk_stdout_fd);
++
+     if (qemu_loglevel_mask(CPU_LOG_PAGE)) {
+         qemu_log("guest_base  %p\n", (void *)guest_base);
+         log_page_dump("binary load");
+diff --git a/linux-user/qemu.h b/linux-user/qemu.h
+index 52c98171..9799ba49 100644
+--- a/linux-user/qemu.h
++++ b/linux-user/qemu.h
+@@ -402,6 +402,10 @@ extern long safe_syscall_base(int *pending, long number, ...);
+ 
+ /* syscall.c */
+ int host_to_target_waitstatus(int status);
++void qemu_set_hackbind(const char *arg);
++void qemu_set_hackproc(const char *arg);
++void qemu_set_hacksysinfo(const char *arg);
++void qemu_set_execve_path(const char *path);
+ 
+ /* strace.c */
+ void print_syscall(void *cpu_env, int num,
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index d1f281cd..8a950080 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -137,6 +137,23 @@
+ #include "qemuafl/common.h"
+ #include "qemuafl/qasan-qemu.h"
+ 
++int used_ports[512] = {0};
++int ports_index = 0;
++bool hackbind    = false;
++bool hackproc    = false;
++bool hacksysinfo = false;
++bool hookhack    = false;
++bool hookhack_recved = false;
++unsigned int hookhack_done = 0;
++char *qemu_execve_path;
++int http_fd = -1;
++int conn_fd = -1;
++extern int bk_stdin_fd;
++extern int bk_stdout_fd;
++extern FILE *bk_stdin;
++extern FILE *bk_stdout;
++#define BINPRM_BUF_SIZE 128
++
+ #ifndef CLONE_IO
+ #define CLONE_IO                0x80000000      /* Clone io context */
+ #endif
+@@ -882,6 +899,27 @@ static abi_ulong target_brk;
+ static abi_ulong target_original_brk;
+ static abi_ulong brk_page;
+ 
++void qemu_set_hackbind(const char *arg) {
++    hackbind = true;
++}
++
++void qemu_set_hackproc(const char *arg) {
++    hackproc = true;
++}
++
++void qemu_set_hacksysinfo(const char *arg) {
++    hacksysinfo = true;
++}
++
++void qemu_set_hookhack(const char *arg) {
++    hookhack = true;
++}
++
++void qemu_set_execve_path(const char *path)
++{
++    qemu_execve_path = strdup(path);
++}
++
+ void target_set_brk(abi_ulong new_brk)
+ {
+     target_original_brk = target_brk = HOST_PAGE_ALIGN(new_brk);
+@@ -1417,6 +1455,7 @@ static abi_long do_select(int n,
+     struct timeval tv;
+     struct timespec ts, *ts_ptr;
+     abi_long ret;
++    bool hookhack_set_fd = false;
+ 
+     ret = copy_from_user_fdset_ptr(&rfds, &rfds_ptr, rfd_addr, n);
+     if (ret) {
+@@ -1441,10 +1480,47 @@ static abi_long do_select(int n,
+         ts_ptr = NULL;
+     }
+ 
+-    ret = get_errno(safe_pselect6(n, rfds_ptr, wfds_ptr, efds_ptr,
+-                                  ts_ptr, NULL));
++    if(hookhack && http_fd == -1) {
++        fprintf(bk_stdout, "[HOOK] select invoked with nfd: %d\n", n);
++        // fake select result:
++        // 1. fake connect at port 80
++        for(int i=0; i<n; i++) {
++            struct stat statbuf;
++            struct sockaddr_in sin;
++            socklen_t len = sizeof(sin);
++            uint16_t port = 0;
++            if(!FD_ISSET(i, &rfds)) continue;
++            printf("checking fd: %d\n", i);
++            if(fstat(i, &statbuf)) continue;
++            if(!S_ISSOCK(statbuf.st_mode)) continue;
++            if(getsockname(i, (struct sockaddr *)&sin, &len)) continue;
++            port = ntohs(sin.sin_port);
++            printf("port: %d\n", port);
++            if(port != 80) continue;
++            http_fd = i;
++            fprintf(bk_stdout, "[HOOK] http_fd: %d\n", http_fd);
++            hookhack_set_fd = true;
++            break;
++        }
++    }
++
++    if(hookhack_set_fd) {
++        ret = http_fd + 1;;
++        memset(&rfds, 0, sizeof(rfds));
++        memset(&wfds, 0, sizeof(wfds));
++        memset(&efds, 0, sizeof(efds));
++    } else {
++        ret = get_errno(safe_pselect6(n, rfds_ptr, wfds_ptr, efds_ptr,
++                                      ts_ptr, NULL));
++    }
+ 
+     if (!is_error(ret)) {
++        if(hookhack && hookhack_set_fd) {
++        // if(hookhack) {
++            fprintf(bk_stdout, "[HOOK] setting fd!\n");
++            FD_SET(http_fd, &rfds);
++            if(ret < http_fd+1) ret = http_fd+1;
++        }
+         if (rfd_addr && copy_to_user_fdset(rfd_addr, &rfds, n))
+             return -TARGET_EFAULT;
+         if (wfd_addr && copy_to_user_fdset(wfd_addr, &wfds, n))
+@@ -1620,6 +1696,12 @@ static abi_long do_ppoll(abi_long arg1, abi_long arg2, abi_long arg3,
+     struct pollfd *pfd;
+     unsigned int i;
+     abi_long ret;
++    bool hookhack_set_fd = false;
++    int hookhack_idx = -1;
++    bool conn_set_fd = false;
++    int conn_idx = -1;
++
++    fputs("[HOOK] poll invoked!!!\n", bk_stdout);
+ 
+     pfd = NULL;
+     target_pfd = NULL;
+@@ -1637,8 +1719,49 @@ static abi_long do_ppoll(abi_long arg1, abi_long arg2, abi_long arg3,
+         for (i = 0; i < nfds; i++) {
+             pfd[i].fd = tswap32(target_pfd[i].fd);
+             pfd[i].events = tswap16(target_pfd[i].events);
++            fprintf(bk_stdout, "poll fd: %d\n", pfd[i].fd);
++
++            if(conn_fd != -1 && pfd[i].fd == conn_fd) conn_idx = i;
++
++            if(hookhack && http_fd == -1) {
++                struct stat statbuf;
++                struct sockaddr_in sin;
++                socklen_t len = sizeof(sin);
++                uint16_t port = 0;
++                int fd = pfd[i].fd;
++
++                if(fd < 0) continue;
++                if(fstat(fd, &statbuf)) continue;
++                if(!S_ISSOCK(statbuf.st_mode)) continue;
++                if(getsockname(fd, (struct sockaddr *)&sin, &len)) continue;
++                port = ntohs(sin.sin_port);
++                if(port != 80) continue;
++                http_fd = fd;
++                fprintf(bk_stdout, "[HOOK] http_fd: %d\n", http_fd);
++                hookhack_set_fd = true;
++                hookhack_idx = i;
++            }
++        }
++    }
++
++    if(conn_set_fd) {
++        for (i = 0; i < nfds; i++) {
++            if (i != conn_idx) target_pfd[i].revents = 0;
++            else target_pfd[i].revents = tswap16(POLLIN);
+         }
++        unlock_user(target_pfd, arg1, sizeof(struct target_pollfd) * nfds);
++        return 1;
+     }
++
++    if(hookhack_set_fd) {
++        for (i = 0; i < nfds; i++) {
++            if (i != hookhack_idx) target_pfd[i].revents = 0;
++            else target_pfd[i].revents = tswap16(POLLIN);
++        }
++        unlock_user(target_pfd, arg1, sizeof(struct target_pollfd) * nfds);
++        return 1;
++    }
++
+     if (ppoll) {
+         struct timespec _timeout_ts, *timeout_ts = &_timeout_ts;
+         target_sigset_t *target_set;
+@@ -1714,6 +1837,7 @@ static abi_long do_ppoll(abi_long arg1, abi_long arg2, abi_long arg3,
+             target_pfd[i].revents = tswap16(pfd[i].revents);
+         }
+     }
++
+     unlock_user(target_pfd, arg1, sizeof(struct target_pollfd) * nfds);
+     return ret;
+ }
+@@ -2204,6 +2328,11 @@ static abi_long do_setsockopt(int sockfd, int level, int optname,
+     struct ip_mreqn *ip_mreq;
+     struct ip_mreq_source *ip_mreq_source;
+ 
++    if(sockfd == conn_fd) {
++        fputs("[HOOK] hook setsockopt\n", bk_stdout);
++        return 0;
++    }
++
+     switch(level) {
+     case SOL_TCP:
+     case SOL_UDP:
+@@ -2315,6 +2444,11 @@ static abi_long do_setsockopt(int sockfd, int level, int optname,
+             }
+             ret = get_errno(setsockopt(sockfd, level, optname,
+                                        &val, sizeof(val)));
++            // CAPYSIX PATCH
++            if (hackbind && ret != 0) {
++                 fprintf(stderr, "[qemu] Forcing setsockopt to return 0 even in failure cases [setsockopt(%d, %d, %d) = %d]\n", sockfd, level, optname, ret);
++                 ret = 0;
++             }
+             break;
+         case IPV6_PKTINFO:
+         {
+@@ -2663,6 +2797,11 @@ static abi_long do_getsockopt(int sockfd, int level, int optname,
+     int len, val;
+     socklen_t lv;
+ 
++    if(sockfd == conn_fd) {
++        fputs("[HOOK] hook getsockopt\n", bk_stdout);
++        return 0;
++    }
++
+     switch(level) {
+     case TARGET_SOL_SOCKET:
+         level = SOL_SOCKET;
+@@ -3270,6 +3409,11 @@ static abi_long do_socket(int domain, int type, int protocol)
+         return -TARGET_EPROTONOSUPPORT;
+     }
+ 
++    if (hackbind && domain == AF_INET6) {
++        // handle all ipv6 networking as ipv4
++        domain = AF_INET;
++    }
++
+     if (domain == AF_PACKET ||
+         (domain == AF_INET && type == SOCK_PACKET)) {
+         protocol = tswap16(protocol);
+@@ -3310,6 +3454,10 @@ static abi_long do_bind(int sockfd, abi_ulong target_addr,
+ {
+     void *addr;
+     abi_long ret;
++    char ip[INET6_ADDRSTRLEN+1] = "";
++    unsigned short port = 0, newport = 0;
++    unsigned short reuse = 0, retries = 0;
++    void* cust_addr = 0;
+ 
+     if ((int)addrlen < 0) {
+         return -TARGET_EINVAL;
+@@ -3321,7 +3469,71 @@ static abi_long do_bind(int sockfd, abi_ulong target_addr,
+     if (ret)
+         return ret;
+ 
+-    return get_errno(bind(sockfd, addr, addrlen));
++    if (hackbind) {
++        if(((struct sockaddr*)addr)->sa_family == AF_INET) {
++            inet_ntop(AF_INET, &((struct sockaddr_in*)addr)->sin_addr, ip, sizeof(ip));
++            port = ntohs(((struct sockaddr_in*)addr)->sin_port);
++        }
++        else if (((struct sockaddr*)addr)->sa_family == AF_INET6) {
++            cust_addr = alloca(sizeof(struct sockaddr_in));
++            // forces a ipv6 bind address to ipv4
++            port = ntohs(((struct sockaddr_in6*)addr)->sin6_port);
++            memset(((struct sockaddr_in*)cust_addr), 0, sizeof(struct sockaddr_in));
++
++            fprintf(bk_stdout, "[qemu] Using custom bind, forcing ipv6 protocol to ipv4 on addr 0.0.0.0 port %d\n", port);
++            inet_pton(AF_INET, "0.0.0.0", &((struct sockaddr_in*)cust_addr)->sin_addr);
++            inet_ntop(AF_INET, &((struct sockaddr_in*)cust_addr)->sin_addr, ip, sizeof(ip));
++            ((struct sockaddr_in*)cust_addr)->sin_port = htons(port);
++            ((struct sockaddr_in*)cust_addr)->sin_family = AF_INET;
++            addr = cust_addr;
++            addrlen = sizeof(struct sockaddr_in);
++        }
++
++        newport = port;
++        retries = 0;
++         // keep trying different ports until we get a successful bind or exceed retries
++        while (retries < 3) {
++            fprintf(bk_stdout, "[qemu] Trying ip: %s on sockfd %d\n", ip, sockfd);
++            ret = get_errno(bind(sockfd, addr, addrlen));
++            if (!ret) {
++                fprintf(bk_stdout, "[qemu] Successful Bind %d\n", (int)ret);
++                used_ports[ports_index] = newport;
++                ports_index = ports_index + 1;
++                return ret;
++            }
++            if (newport <= 0) {
++                if (((struct sockaddr*)addr)->sa_family == AF_INET6 || ((struct sockaddr*)addr)->sa_family == AF_INET) {
++                    fprintf(bk_stdout, "[qemu] Forcing port %d to 80 and retrying...", newport);
++                    newport = 80;
++                }
++            }
++            else {
++                newport = newport + 1;
++                while(1) {
++                    reuse = 0;
++                    for (int i = 0; i < ports_index; i++) {
++                        if (newport == used_ports[i]) {
++                            newport = newport + 1;
++                            reuse = 1;
++                            break;
++                        }
++                    }
++                    if(reuse == 0) {
++                        break;
++                    }
++                }
++                fprintf(bk_stdout, "[qemu] bind failed, retrying with port %d\n", newport);
++                retries = retries + 1;
++            }
++
++            ((struct sockaddr_in*)addr)->sin_port = htons(newport);
++        }
++    }
++    else {
++        ret = get_errno(bind(sockfd, addr, addrlen));
++    }
++
++    return ret;
+ }
+ 
+ /* do_connect() Must return target values and target errnos. */
+@@ -3516,6 +3728,7 @@ static abi_long do_sendrecvmmsg(int fd, abi_ulong target_msgvec,
+ }
+ 
+ /* do_accept4() Must return target values and target errnos. */
++bool gh_dryrun_done = false;
+ static abi_long do_accept4(int fd, abi_ulong target_addr,
+                            abi_ulong target_addrlen_addr, int flags)
+ {
+@@ -3524,6 +3737,45 @@ static abi_long do_accept4(int fd, abi_ulong target_addr,
+     abi_long ret;
+     int host_flags;
+ 
++    if(hookhack) {
++        struct sockaddr_in sin;
++        socklen_t len = sizeof(sin);
++        uint16_t port = 0;
++        // int new_fd = -1;
++        if(conn_fd != -1) {
++            fputs("[HOOK] deny subsequent accept calls!\n", bk_stdout);
++            return -EAGAIN;
++        }
++
++        fputs("[HOOK] accept hooked!\n", bk_stdout);
++        if(getsockname(fd, (struct sockaddr *)&sin, &len)) goto out;
++        port = ntohs(sin.sin_port);
++        fprintf(bk_stdout, "[HOOK] accept at port: %d\n", port);
++        if(port != 80) goto out;
++        if(hookhack_recved) {
++            fputs("[HOOK] done!\n", bk_stdout);
++            exit(0);
++        }
++        conn_fd = dup(bk_stdin_fd);
++        fprintf(bk_stdout, "[HOOK] accept sock fd: %d\n", conn_fd);
++
++        // fake connection source
++        if (get_user_u32(addrlen, target_addrlen_addr))
++            return -TARGET_EFAULT;
++        struct sockaddr_in saddr = {0};
++        fputs("[HOOK] getsockname invoked!\n", bk_stdout);
++        saddr.sin_family = AF_INET;
++        saddr.sin_port = htons(4444);
++        inet_pton(AF_INET, "127.0.0.1", &saddr.sin_addr);
++        host_to_target_sockaddr(target_addr, (void *)&saddr, addrlen);
++        if (put_user_u32(addrlen, target_addrlen_addr)) return -TARGET_EFAULT;
++
++        hookhack_done++;
++        if(getenv("GH_DRYRUN")) gh_dryrun_done = true;
++        return conn_fd;
++out:
++    }
++
+     host_flags = target_to_host_bitmask(flags, fcntl_flags_tbl);
+ 
+     if (target_addr == 0) {
+@@ -3608,6 +3860,18 @@ static abi_long do_getsockname(int fd, abi_ulong target_addr,
+ 
+     addr = alloca(addrlen);
+ 
++    if(hookhack && conn_fd != -1 && fd == conn_fd) {
++        struct sockaddr_in saddr = {0};
++        fputs("[HOOK] getsockname invoked!\n", bk_stdout);
++        fprintf(bk_stdout, "getsockname fd: %d\n", fd);
++        saddr.sin_family = AF_INET;
++        saddr.sin_port = htons(80);
++        inet_pton(AF_INET, "127.0.0.1", &saddr.sin_addr);
++        host_to_target_sockaddr(target_addr, (void *)&saddr, addrlen);
++        if (put_user_u32(addrlen, target_addrlen_addr)) return -TARGET_EFAULT;
++        return 0;
++    }
++
+     ret_addrlen = addrlen;
+     ret = get_errno(getsockname(fd, addr, &ret_addrlen));
+     if (!is_error(ret)) {
+@@ -3650,9 +3914,20 @@ static abi_long do_sendto(int fd, abi_ulong msg, size_t len, int flags,
+         return -TARGET_EINVAL;
+     }
+ 
++    if(hookhack && conn_fd != -1 && fd == conn_fd && hookhack_recved) {
++        fputs("[HOOK] done in sendto!\n", bk_stdout);
++        exit(0);
++    }
++
+     host_msg = lock_user(VERIFY_READ, msg, len, 1);
+     if (!host_msg)
+         return -TARGET_EFAULT;
++    if(hookhack && conn_fd != -1 && fd == conn_fd) {
++        fprintf(bk_stdout, "[HOOK] sendto invoked @ fd: %d\n", fd);
++        abi_long ret = (abi_long) write(fd, host_msg, len);
++        unlock_user(host_msg, msg, len);
++        return ret;
++    }
+     if (fd_trans_target_to_host_data(fd)) {
+         copy_msg = host_msg;
+         host_msg = g_malloc(len);
+@@ -3694,6 +3969,18 @@ static abi_long do_recvfrom(int fd, abi_ulong msg, size_t len, int flags,
+     host_msg = lock_user(VERIFY_WRITE, msg, len, 0);
+     if (!host_msg)
+         return -TARGET_EFAULT;
++    if(hookhack && conn_fd != -1 && fd == conn_fd) {
++        fprintf(bk_stdout, "[HOOK] recvfrom invoked @ fd: %d\n", fd);
++        abi_long ret = (abi_long) read(fd, host_msg, len);
++        if (ret < 0) {
++            int x = open("/dev/stdin", 0);
++            ret = read(x, host_msg, len);
++            close(x);
++        }
++        unlock_user(host_msg, msg, len);
++        hookhack_recved = true;
++        return ret;
++    }
+     if (target_addr) {
+         if (get_user_u32(addrlen, target_addrlen)) {
+             ret = -TARGET_EFAULT;
+@@ -8121,6 +8408,27 @@ static int do_openat(void *cpu_env, int dirfd, const char *pathname, int flags,
+         { NULL, NULL, NULL }
+     };
+ 
++    char* result;
++    char rpath[PATH_MAX+1];
++    char redirected_path[PATH_MAX+1];
++    memset(redirected_path, 0, PATH_MAX+1);
++
++    if (hackproc) {
++        result = realpath(pathname, rpath);
++        if (result == NULL)
++            snprintf(rpath, PATH_MAX, "%s", pathname);
++        if (strncmp(rpath, "/proc/", 6) == 0) {
++            snprintf(redirected_path, PATH_MAX+1, "/ghproc/%s", rpath+6);
++            fprintf(bk_stdout, "[qemu] hackproc - changing %s to %s\n", rpath, redirected_path);
++            pathname = redirected_path;
++        }
++        else if (strncmp(rpath, "/dev/", 5) == 0) {
++            snprintf(redirected_path, PATH_MAX+1, "/ghdev/%s", rpath+5);
++            fprintf(bk_stdout, "[qemu] hackdev - changing %s to %s\n", rpath, redirected_path);
++            pathname = redirected_path;
++        }
++    }
++
+     if (is_proc_myself(pathname, "exe")) {
+         int execfd = qemu_getauxval(AT_EXECFD);
+         return execfd ? execfd : safe_openat(dirfd, exec_path, flags, mode);
+@@ -8250,6 +8558,155 @@ static int host_to_target_cpu_mask(const unsigned long *host_mask,
+     return 0;
+ }
+ 
++//extern int auth_thread_complete;
++/* qemu_execve() Must return target values and target errnos. */
++static abi_long qemu_execve(char *filename, char *argv[],
++                  char *envp[])
++{
++    char *i_arg = NULL, *i_name = NULL;
++    char **new_argp;
++    int argc, fd, ret, i, offset = 3;
++    int tokCount = 0;
++    char *cp;
++    char *token;
++    char *qemu_path_tokens;
++    char *qemu_path;
++    char buf[BINPRM_BUF_SIZE];
++
++    // if (auth_thread_complete == 1) {
++    //     fprintf(bk_stdout, "[qemu_execve] deny execve during fuzzing\n");
++    //     return 0;
++    // }
++
++    fprintf(bk_stdout, "[qemu] doing qemu_execven on filename %s\n", filename);
++    memset(buf, 0, BINPRM_BUF_SIZE);
++
++
++    for (argc = 0; argv[argc] != NULL; argc++) {
++        /* nothing */ ;
++        // fprintf(stderr, "   - arg %s\n", argv[argc]);
++    }
++
++    fd = open(filename, O_RDONLY);
++    if (fd == -1) {
++        // fprintf(stderr, "   - ERR1 %d\n", -ENOENT);
++        return -ENOENT;
++    }
++
++    ret = read(fd, buf, BINPRM_BUF_SIZE);
++    if (ret == -1) {
++        close(fd);
++        // fprintf(stderr, "   - ERR2 %d\n", -ENOENT);
++        return -ENOENT;
++    }
++
++    close(fd);
++
++    /* adapted from the kernel
++     * https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/tree/fs/binfmt_script.c
++     */
++    if ((buf[0] == '#') && (buf[1] == '!')) {
++        /*
++         * This section does the #! interpretation.
++         * Sorta complicated, but hopefully it will work.  -TYT
++         */
++
++        buf[BINPRM_BUF_SIZE - 1] = '\0';
++        cp = strchr(buf, '\n');
++        if (cp == NULL) {
++            cp = buf+BINPRM_BUF_SIZE-1;
++        }
++        *cp = '\0';
++        while (cp > buf) {
++            cp--;
++            if ((*cp == ' ') || (*cp == '\t')) {
++                *cp = '\0';
++            } else {
++                break;
++            }
++        }
++        for (cp = buf+2; (*cp == ' ') || (*cp == '\t'); cp++) {
++            /* nothing */ ;
++        }
++        if (*cp == '\0') {
++            return -ENOEXEC; /* No interpreter name found */
++        }
++        i_name = cp;
++        i_arg = NULL;
++        for ( ; *cp && (*cp != ' ') && (*cp != '\t'); cp++) {
++            /* nothing */ ;
++        }
++        while ((*cp == ' ') || (*cp == '\t')) {
++            *cp++ = '\0';
++        }
++        if (*cp) {
++            i_arg = cp;
++        }
++
++        if (i_arg) {
++            offset = 5;
++        } else {
++            offset = 4;
++        }
++    }
++
++    qemu_path_tokens = strdup(qemu_execve_path);
++    token = strtok(qemu_path_tokens, " ");
++    qemu_path = strdup(token);
++    token = strtok(NULL, " ");
++    while (token != NULL) {
++        token = strtok(NULL, " ");
++        tokCount += 1;
++    }
++    offset += 2 + tokCount;
++
++    new_argp = alloca((argc + offset + 1) * sizeof(void *));
++    /* Copy the original arguments with offset */
++    for (i = 0; i < argc; i++) {
++        // fprintf(stderr, "   - argv %s\n", argv[i]);
++        new_argp[i + offset] = strdup(argv[i]);
++    }
++
++    new_argp[0] = strdup(qemu_path);
++    new_argp[1] = strdup("-0");
++
++    if (i_name) {
++        new_argp[2] = i_name;
++        offset -= 1; // iname is 2nd and 2nd last arg
++
++    } else {
++        new_argp[2] = argv[0];
++    }
++
++
++    qemu_path_tokens = strdup(qemu_execve_path);
++    token = strtok(qemu_path_tokens, " ");
++    while (tokCount > 0 && token != NULL) {
++        token = strtok(NULL, " ");
++        new_argp[offset - 2 - tokCount] = strdup(token);
++        tokCount -= 1;
++    }
++
++    new_argp[offset - 2] = strdup("-execve");
++    new_argp[offset - 1] = strdup(qemu_execve_path);
++
++    if (i_name) {
++        offset += 1; // iname is 2nd and 2nd last arg
++        new_argp[offset - 1] = i_name;
++
++        if (i_arg) {
++            new_argp[offset - 2] = i_name;
++            new_argp[offset - 1] = i_arg;
++        }
++    }
++
++    new_argp[offset] = filename;
++    new_argp[argc + offset] = NULL;
++
++    return get_errno(execve(qemu_path, new_argp, envp));
++}
++
++
+ /* This is an internal helper for do_syscall so that it is easier
+  * to have a single return point, so that actions, such as logging
+  * of syscall results, can be performed.
+@@ -8273,6 +8730,7 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+     struct statfs stfs;
+ #endif
+     void *p;
++    int fd;
+ 
+     switch(num) {
+     case TARGET_NR_exit:
+@@ -8316,6 +8774,12 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+         _exit(arg1);
+         return 0; /* avoid warning */
+     case TARGET_NR_read:
++        fd = arg1;
++        if(hookhack && conn_fd != -1 && fd == conn_fd) {
++            fprintf(bk_stdout, "[HOOK] read invoked @ fd: %d\n", fd);
++            hookhack_recved = true;
++        }
++
+         if (arg2 == 0 && arg3 == 0) {
+             return get_errno(safe_read(arg1, 0, 0));
+         } else {
+@@ -8330,6 +8794,11 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+         }
+         return ret;
+     case TARGET_NR_write:
++        fd = arg1;
++        if(hookhack && conn_fd != -1 && fd == conn_fd && hookhack_recved) {
++            fputs("[HOOK] done in write!\n", bk_stdout);
++            exit(0);
++        }
+         if (arg2 == 0 && arg3 == 0) {
+             return get_errno(safe_write(arg1, 0, 0));
+         }
+@@ -8381,6 +8850,16 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+         return ret;
+ #endif
+     case TARGET_NR_close:
++        // fprintf(bk_stdout, "[HOOK] close fd: %d\n", arg1);
++        if(arg1 == bk_stdin_fd || arg1 == bk_stdout_fd) {
++            fprintf(bk_stdout, "[HOOK] deny attempts to close fd: %d\n", arg1);
++            return 0;
++        }
++        if(conn_fd >=0 && arg1 == conn_fd) {
++            fputs("[HOOK] close!\n", bk_stdout);
++            exit(0);
++        }
++        return get_errno(shutdown(arg1, arg2));
+         if (unlikely(arg1 == TSL_FD))
+             return 0x00;
+         fd_trans_unregister(arg1);
+@@ -8573,7 +9052,13 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+              * before the execve completes and makes it the other
+              * program's problem.
+              */
+-            ret = get_errno(safe_execve(p, argp, envp));
++            if (qemu_execve_path && *qemu_execve_path) {
++                ret = get_errno(qemu_execve(p, argp, envp));
++            }
++            else {
++                ret = get_errno(safe_execve(p, argp, envp));
++            }
++
+             unlock_user(p, arg1, 0);
+ 
+             goto execve_end;
+@@ -10003,6 +10488,10 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+ #endif
+ #ifdef TARGET_NR_shutdown
+     case TARGET_NR_shutdown:
++        if(conn_fd >=0 && arg1 == conn_fd) {
++            fputs("[HOOK] shutdown!\n", bk_stdout);
++            exit(0);
++        }
+         return get_errno(shutdown(arg1, arg2));
+ #endif
+ #if defined(TARGET_NR_getrandom) && defined(__NR_getrandom)
+@@ -10215,9 +10704,16 @@ static abi_long do_syscall1(void *cpu_env, int num, abi_long arg1,
+                 if (!lock_user_struct(VERIFY_WRITE, target_value, arg1, 0))
+                     return -TARGET_EFAULT;
+                 __put_user(value.uptime, &target_value->uptime);
+-                __put_user(value.loads[0], &target_value->loads[0]);
+-                __put_user(value.loads[1], &target_value->loads[1]);
+-                __put_user(value.loads[2], &target_value->loads[2]);
++
++                if (hacksysinfo) {
++                    __put_user(0, &target_value->loads[0]);
++                    __put_user(0, &target_value->loads[1]);
++                    __put_user(0, &target_value->loads[2]);
++                } else {
++                    __put_user(value.loads[0], &target_value->loads[0]);
++                    __put_user(value.loads[1], &target_value->loads[1]);
++                    __put_user(value.loads[2], &target_value->loads[2]);
++                }
+                 __put_user(value.totalram, &target_value->totalram);
+                 __put_user(value.freeram, &target_value->freeram);
+                 __put_user(value.sharedram, &target_value->sharedram);
+diff --git a/target/mips/translate.c b/target/mips/translate.c
+index 84befd62..347fb785 100644
+--- a/target/mips/translate.c
++++ b/target/mips/translate.c
+@@ -29292,9 +29292,9 @@ static void mips_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
+         (ctx->hflags & MIPS_HFLAG_BMASK) == 0) {
+         ctx->base.is_jmp = DISAS_TOO_MANY;
+     }
+-    if (ctx->base.pc_next - ctx->page_start >= TARGET_PAGE_SIZE) {
+-        ctx->base.is_jmp = DISAS_TOO_MANY;
+-    }
++    // if (ctx->base.pc_next - ctx->page_start >= TARGET_PAGE_SIZE) {
++    //     ctx->base.is_jmp = DISAS_TOO_MANY;
++    // }
+ }
+ 
+ static void mips_tr_tb_stop(DisasContextBase *dcbase, CPUState *cs)

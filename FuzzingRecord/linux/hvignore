@@ -1,0 +1,18 @@
+# This file protects against inadvertently adding undesired files to the vault.
+# Note: it does not affect the files already present on the server.
+# The syntax and processing of this file is very similar to .gitignore:
+# https://git-scm.com/docs/gitignore
+
+# The user may add directory specific .hvignore files in his projects
+# (please note the dot at the beginning of the file name).
+
+# Backup files should not be added to the vault.
+# Currently they are created by IDA after merging:
+*.bak
+
+# Temporary IDA files normally should not end up in the vault:
+*.id[0-2]
+*.nam
+
+# This is not great because this also forbids standalone type libraries:
+*.til
