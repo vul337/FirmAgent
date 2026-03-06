@@ -303,64 +303,6 @@ Legacy array-of-objects input is still partially supported for endpoint extracti
 
 ------
 
-## Configuration Reference
-
-`FuzzingRecord/Fuzzer.py` CLI:
-
-```
---json-file   (str, required) Path to Pre_fuzzing.json
---delay       (float, default 0.5) Seconds between requests
---host        (str, required) Host header value (IP or DNS name)
---method      (str, default POST) HTTP method for all requests
---taint-tag   (str, default taint_tag) Marker injected into one parameter at a time
-```
-
-
-
-------
-
-## Tips & Best Practices
-
-- **Rate limiting / IDS**: Tune `--delay`, random jitter is already built-in between endpoints.
-- **HTTPS**: If you hit certificate issues, you can allow `verify=False` (already used for non-GET). Prefer installing proper CA bundles in production assessments.
-- **Virtual hosts / SNI**: Always pass `--host` when the server expects a specific `Host` header different from the IP.
-- **Schema hygiene**: Keep `Pre_fuzzing.json` valid. The current fuzzer expects `api_endpoints` + `para`; malformed or legacy-only schemas will reduce coverage.
-- **Artifact hygiene**: Keep runtime artifacts (`Source.json` / `source.json` and optionally `Indirect_call.json` / `indirect_data.json`) side-by-side with binaries before launching `LLMATaint.py`.
-
-------
-
-## Troubleshooting
-
-- **`No API definitions found`**:
-   Ensure `Pre_fuzzing.json` exists and is valid JSON. Run pre-fuzzing scripts again.
-- **`No parameters found` for an endpoint**:
-   Make sure your `request_payload` string includes `<String_value>` placeholders for fuzzable fields.
-- **`Request error: ...` / timeouts**:
-  - Verify network reachability from the host to the emulated firmware.
-  - Increase timeouts in `send_request` if needed.
-  - Check target service actually listens on the base URL.
-- **Target requires auth**:
-   Add cookies/headers/tokens in `send_request()` or pre-set in `para_results.json`. You can also add an `Authorization` header.
-- **Instrumentation not recording**:
-   Prefer using `build_fuzz_img.py`. If doing it manually, confirm your loader paths and (if applicable) `LD_PRELOAD`/QEMU plugins are active. Ensure `libibresolver.so` is discoverable by the emulated environment.
-- **LLMATaint cannot find source artifact**:
-  Place `Source.json` or `source.json` (contains source addresses and reachable test cases) in the **same directory** as the target binary passed via `-b`, or pass `--dynamic-source-file` explicitly.
-
-------
-
-## FAQ
-
-**Q:** How do I add new payloads (e.g., SQLi)?
-
- **A:** Extend `self.payloads` in `APIFuzzer.__init__`. Add detection logic (error signatures, timing, reflections) in `analyze_response()`.
-
-**Q:** Can I parallelize fuzzing?
-
- **A:** The provided script is single-process to preserve ordering and throttling. You can shard `Pre_fuzzing.json` by endpoints across multiple processes/containers.
-
-**Q:** Where do logs go?
-
- **A:** Human logs → `fuzzing_results.log`; structured request packets → `result.json`; source-address testcase artifact → `Source.json` / `source.json` from runtime monitoring.
 
 
 
@@ -398,6 +340,26 @@ python LLMATaint.py \
   -t ci \
   -o ./results/ASUS \
   -m R1_official
+```
+
+
+**Reference**
+
+If you use or cite this work, please reference:
+
+```bibtex
+@inproceedings{Ji2026FirmAgent,
+  author    = {Ji, Jiangan and Zhang, Chao and Gan, Shuitao and Lin, Jian and Liu, Hangtian and Liu, Tieming and Zheng, Lei and Jia, Zhipeng},
+  title     = {FirmAgent: Leveraging Fuzzing to Assist LLM Agents with IoT Firmware Vulnerability Discovery},
+  booktitle = {Network and Distributed System Security (NDSS) Symposium},
+  year      = {2026},
+  month     = {February},
+  pages     = {1--16},
+  address   = {San Diego, CA, USA},
+  doi       = {10.14722/ndss.2026.231943},
+  isbn      = {979-8-9919276-8-0},
+  url       = {https://dx.doi.org/10.14722/ndss.2026.231943},
+}
 ```
 
 
