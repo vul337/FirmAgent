@@ -228,7 +228,7 @@ python FuzzingRecord/Fuzzer.py \
 **What happens:**
 
 - The fuzzer parses `Pre_fuzzing.json` and parameter templates.
-- For each endpoint & parameter, it generates mutations (e.g., command-injection, XSS, traversal).
+- For each endpoint & parameter, it generates mutations.
 - Requests and responses are logged to `fuzzing_results.log`.
 - Structured request/response packets are written to `result.json` next to the input JSON.
 - Potential vulnerabilities are flagged based on error codes, timing, and content indicators.
